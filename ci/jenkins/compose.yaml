@@ -1,0 +1,40 @@
+name: bilingual-interview-coach-jenkins
+
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: controller.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+    networks:
+      - jenkins
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - controller
+    env_file:
+      - path: ./agent.env
+        required: true
+    environment:
+      JENKINS_URL: http://controller:8080
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+    volumes:
+      - agent_work:/home/jenkins/agent
+    networks:
+      - jenkins
+
+networks:
+  jenkins: {}
+
+volumes:
+  jenkins_home:
+  agent_work:
