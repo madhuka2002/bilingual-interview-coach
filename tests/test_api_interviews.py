@@ -56,6 +56,24 @@ async def get_interview(
         return await client.get(f"/v1/interviews/{SESSION_ID}")
 
 
+async def post_lifecycle_action(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[Request], Response],
+    action: str,
+) -> Response:
+    def fake_client() -> AsyncClient:
+        return AsyncClient(
+            transport=MockTransport(handler),
+            base_url="http://interview-service",
+        )
+
+    monkeypatch.setattr(api_main, "create_interview_service_client", fake_client)
+
+    transport = ASGITransport(app=api_main.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post(f"/v1/interviews/{SESSION_ID}/{action}")
+
+
 @pytest.mark.anyio
 async def test_public_api_creates_interview_session(
     monkeypatch: pytest.MonkeyPatch,
@@ -264,6 +282,110 @@ async def test_public_api_get_forwards_configured_service_url_and_session_path(
     )
 
     assert response.status_code == 200
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("action", "service_status", "session_status"),
+    [
+        ("start", 200, "active"),
+        ("complete", 200, "completed"),
+    ],
+)
+async def test_public_api_forwards_lifecycle_actions(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    service_status: int,
+    session_status: str,
+) -> None:
+    service_reply = {
+        "id": SESSION_ID,
+        **PAYLOAD,
+        "status": session_status,
+    }
+
+    def handle_service_request(request: Request) -> Response:
+        assert request.method == "POST"
+        assert request.url.path == f"/v1/interviews/{SESSION_ID}/{action}"
+        assert request.content == b""
+        return Response(service_status, json=service_reply)
+
+    response = await post_lifecycle_action(
+        monkeypatch,
+        handle_service_request,
+        action,
+    )
+
+    assert response.status_code == service_status
+    assert response.json() == service_reply
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("action", "service_status", "service_reply"),
+    [
+        ("start", 404, {"detail": "Interview session not found"}),
+        (
+            "complete",
+            409,
+            {"detail": "Cannot transition interview session from created to completed"},
+        ),
+    ],
+)
+async def test_public_api_forwards_lifecycle_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    service_status: int,
+    service_reply: dict[str, str],
+) -> None:
+    def handle_service_request(request: Request) -> Response:
+        return Response(service_status, json=service_reply)
+
+    response = await post_lifecycle_action(
+        monkeypatch,
+        handle_service_request,
+        action,
+    )
+
+    assert response.status_code == service_status
+    assert response.json() == service_reply
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("action", "failure", "expected_status", "expected_detail"),
+    [
+        ("start", "connection", 503, "Interview service unavailable"),
+        ("complete", "timeout", 504, "Interview service timed out"),
+        ("start", "status", 502, "Invalid response from interview service"),
+        ("complete", "json", 502, "Invalid response from interview service"),
+    ],
+)
+async def test_public_api_handles_lifecycle_downstream_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    failure: str,
+    expected_status: int,
+    expected_detail: str,
+) -> None:
+    def handle_service_request(request: Request) -> Response:
+        if failure == "connection":
+            raise ConnectError("private connection details", request=request)
+        if failure == "timeout":
+            raise ReadTimeout("private timeout details", request=request)
+        if failure == "status":
+            return Response(500, json={"detail": "private upstream details"})
+        return Response(200, content=b"not valid JSON")
+
+    response = await post_lifecycle_action(
+        monkeypatch,
+        handle_service_request,
+        action,
+    )
+
+    assert response.status_code == expected_status
+    assert response.json() == {"detail": expected_detail}
+    assert "private" not in response.text
 
 
 @pytest.mark.anyio
