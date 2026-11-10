@@ -1,0 +1,26 @@
+name: bilingual-interview-coach
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${BIC_POSTGRES_DB:?Set BIC_POSTGRES_DB in .env}
+      POSTGRES_USER: ${BIC_POSTGRES_USER:?Set BIC_POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${BIC_POSTGRES_PASSWORD:?Set BIC_POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${BIC_POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
