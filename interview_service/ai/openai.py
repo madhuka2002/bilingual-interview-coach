@@ -14,8 +14,14 @@ from interview_service.ai.base import (
     AIProviderUnavailableError,
     ConversationTurn,
     EvaluationResult,
+    InterviewConfiguration,
     QuestionResult,
     SummaryResult,
+)
+from interview_service.ai.prompts import (
+    evaluation_prompt,
+    question_prompt,
+    summary_prompt,
 )
 
 ResultModel = TypeVar("ResultModel", bound=BaseModel)
@@ -46,6 +52,7 @@ class OpenAIProvider:
         self._max_retries = max_retries
         self._transport = transport
         self._sleep = sleep
+        self.last_usage: dict[str, Any] | None = None
 
     def generate_question(
         self,
@@ -54,16 +61,12 @@ class OpenAIProvider:
         language: str,
         sequence: int,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> QuestionResult:
         return self._request(
             QuestionResult,
             "interview_question",
-            (
-                "Generate exactly one concise interview question as JSON. "
-                f"Mode: {mode}. Language code: {language}. Sequence: {sequence}. "
-                "Do not repeat earlier questions.\nHistory:\n"
-                f"{self._history_text(history)}"
-            ),
+            question_prompt(configuration, sequence, history),
         )
 
     def evaluate_answer(
@@ -74,16 +77,12 @@ class OpenAIProvider:
         question: str,
         answer: str,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> EvaluationResult:
         return self._request(
             EvaluationResult,
             "answer_evaluation",
-            (
-                "Evaluate the candidate answer fairly as JSON. "
-                f"Mode: {mode}. Language code: {language}.\n"
-                f"Question: {question}\nAnswer: {answer}\n"
-                f"Earlier history:\n{self._history_text(history)}"
-            ),
+            evaluation_prompt(configuration, question, answer, history),
         )
 
     def summarize_interview(
@@ -92,27 +91,12 @@ class OpenAIProvider:
         mode: str,
         language: str,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> SummaryResult:
         return self._request(
             SummaryResult,
             "interview_summary",
-            (
-                "Summarize the completed interview as constructive JSON feedback. "
-                f"Mode: {mode}. Language code: {language}.\nHistory:\n"
-                f"{self._history_text(history)}"
-            ),
-        )
-
-    @staticmethod
-    def _history_text(history: list[ConversationTurn]) -> str:
-        if not history:
-            return "No earlier turns."
-        return "\n".join(
-            f"{turn.sequence}. Q: {turn.question}\n"
-            f"A: {turn.answer or '[unanswered]'}\n"
-            f"Score: {turn.score if turn.score is not None else '[not evaluated]'}\n"
-            f"Feedback: {turn.feedback or '[none]'}"
-            for turn in history
+            summary_prompt(configuration, history),
         )
 
     def _request(
@@ -140,6 +124,8 @@ class OpenAIProvider:
             },
         }
         response_data = self._post_with_retries(body)
+        usage = response_data.get("usage")
+        self.last_usage = usage if isinstance(usage, dict) else None
         try:
             if response_data.get("status") != "completed":
                 raise AIProviderResponseError("Provider response was incomplete")

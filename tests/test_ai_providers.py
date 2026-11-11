@@ -8,8 +8,17 @@ import pytest
 from interview_service.ai.base import (
     AIProviderResponseError,
     AIProviderTimeoutError,
+    InterviewConfiguration,
 )
 from interview_service.ai.openai import OpenAIProvider
+
+CONFIGURATION = InterviewConfiguration(
+    target_role="Software Engineer",
+    experience_level="mid",
+    category="mixed",
+    difficulty="intermediate",
+    language="en",
+)
 
 
 def completed_response(payload: dict) -> dict:
@@ -45,7 +54,11 @@ def test_openai_adapter_uses_configured_model_and_validates_output() -> None:
     )
 
     result = provider.generate_question(
-        mode="mock_interview", language="en", sequence=1, history=[]
+        mode="mock_interview",
+        language="en",
+        sequence=1,
+        history=[],
+        configuration=CONFIGURATION,
     )
 
     assert result.text == "Question?"
@@ -70,7 +83,11 @@ def test_openai_adapter_retries_timeout_without_paid_calls() -> None:
 
     with pytest.raises(AIProviderTimeoutError):
         provider.generate_question(
-            mode="mock_interview", language="en", sequence=1, history=[]
+            mode="mock_interview",
+            language="en",
+            sequence=1,
+            history=[],
+            configuration=CONFIGURATION,
         )
     assert calls == 2
 
@@ -95,5 +112,9 @@ def test_openai_adapter_rejects_malformed_responses(response_payload: dict) -> N
 
     with pytest.raises(AIProviderResponseError):
         provider.generate_question(
-            mode="mock_interview", language="en", sequence=1, history=[]
+            mode="mock_interview",
+            language="en",
+            sequence=1,
+            history=[],
+            configuration=CONFIGURATION,
         )

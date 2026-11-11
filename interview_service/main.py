@@ -21,6 +21,7 @@ from interview_service.engine import (
     InterviewConflictError,
     complete_interview,
     current_question,
+    get_feedback,
     get_history,
     start_interview,
     submit_answer,
@@ -30,6 +31,7 @@ from interview_service.schemas import (
     CreateInterviewRequest,
     EvaluationResponse,
     HistoryItemResponse,
+    InterviewConfigurationResponse,
     InterviewFeedbackResponse,
     InterviewHistoryResponse,
     InterviewSessionResponse,
@@ -129,7 +131,13 @@ def create_interview_session(
         language=payload.language,
         status=InterviewStatus.CREATED,
         max_questions=get_question_limit(),
+        target_role=payload.target_role,
+        experience_level=payload.experience_level,
+        category=payload.category,
+        difficulty=payload.difficulty,
     )
+    if payload.question_limit is not None:
+        interview.max_questions = payload.question_limit
     database_session.add(interview)
     database_session.flush()
     return interview
@@ -144,6 +152,26 @@ def get_interview_session(
     database_session: DatabaseSession,
 ) -> InterviewSession:
     return require_interview(database_session, session_id)
+
+
+@app.get(
+    "/v1/interviews/{session_id}/configuration",
+    response_model=InterviewConfigurationResponse,
+)
+def get_interview_configuration(
+    session_id: str,
+    database_session: DatabaseSession,
+) -> InterviewConfigurationResponse:
+    interview = require_interview(database_session, session_id)
+    return InterviewConfigurationResponse(
+        interview_id=interview.id,
+        target_role=interview.target_role,
+        experience_level=interview.experience_level,
+        category=interview.category,
+        difficulty=interview.difficulty,
+        preferred_language=interview.language,
+        question_limit=interview.max_questions,
+    )
 
 
 @app.post(
@@ -274,14 +302,11 @@ def get_interview_feedback(
     session_id: str,
     database_session: DatabaseSession,
 ) -> InterviewFeedbackResponse:
-    interview = get_history(database_session, parse_session_id(session_id))
+    interview, evaluations = get_feedback(
+        database_session, parse_session_id(session_id)
+    )
     if interview is None:
         raise HTTPException(status_code=404, detail="Interview session not found")
-    evaluations = [
-        question.answer.evaluation
-        for question in interview.questions
-        if question.answer and question.answer.evaluation
-    ]
     return InterviewFeedbackResponse(
         interview_id=interview.id,
         evaluations=[EvaluationResponse.model_validate(item) for item in evaluations],
