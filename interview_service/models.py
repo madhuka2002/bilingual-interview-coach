@@ -44,6 +44,25 @@ class InterviewStatus(StrEnum):
     COMPLETED = "completed"
 
 
+class ExperienceLevel(StrEnum):
+    ENTRY = "entry"
+    MID = "mid"
+    SENIOR = "senior"
+
+
+class InterviewCategory(StrEnum):
+    TECHNICAL = "technical"
+    BEHAVIORAL = "behavioral"
+    HR = "hr"
+    MIXED = "mixed"
+
+
+class InterviewDifficulty(StrEnum):
+    BEGINNER = "beginner"
+    INTERMEDIATE = "intermediate"
+    ADVANCED = "advanced"
+
+
 class InterviewSession(Base):
     """A durable interview session and its lifecycle timestamps."""
 
@@ -77,6 +96,18 @@ class InterviewSession(Base):
             "max_questions >= 1 AND max_questions <= 20",
             name="ck_interview_sessions_max_questions",
         ),
+        CheckConstraint(
+            "experience_level IN ('entry', 'mid', 'senior')",
+            name="ck_interview_sessions_experience_level",
+        ),
+        CheckConstraint(
+            "category IN ('technical', 'behavioral', 'hr', 'mixed')",
+            name="ck_interview_sessions_category",
+        ),
+        CheckConstraint(
+            "difficulty IN ('beginner', 'intermediate', 'advanced')",
+            name="ck_interview_sessions_difficulty",
+        ),
         Index("ix_interview_sessions_status", "status"),
         Index("ix_interview_sessions_created_at", "created_at"),
     )
@@ -105,6 +136,18 @@ class InterviewSession(Base):
         DateTime(timezone=True), nullable=True
     )
     max_questions: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    target_role: Mapped[str] = mapped_column(
+        String(120), nullable=False, default="Software Engineer"
+    )
+    experience_level: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=ExperienceLevel.MID
+    )
+    category: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=InterviewCategory.MIXED
+    )
+    difficulty: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=InterviewDifficulty.INTERMEDIATE
+    )
     questions: Mapped[list["InterviewQuestion"]] = relationship(
         back_populates="interview",
         cascade="all, delete-orphan",
@@ -200,6 +243,8 @@ class AnswerEvaluation(Base):
     feedback: Mapped[str] = mapped_column(Text, nullable=False)
     strengths: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     improvements: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    criteria: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False)
+    learning_areas: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

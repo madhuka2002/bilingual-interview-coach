@@ -66,7 +66,7 @@ async def forward_interview_request(
 
 
 @app.post("/v1/interviews", status_code=201)
-async def create_interview_session(payload: dict[str, str]) -> JSONResponse:
+async def create_interview_session(payload: dict[str, Any]) -> JSONResponse:
     return await forward_interview_request(
         "POST",
         "/v1/interviews",
@@ -81,6 +81,15 @@ async def get_interview_session(session_id: str) -> JSONResponse:
         "GET",
         f"/v1/interviews/{session_id}",
         allowed_statuses={200, 404},
+    )
+
+
+@app.get("/v1/interviews/{session_id}/configuration")
+async def get_interview_configuration(session_id: str) -> JSONResponse:
+    return await forward_interview_request(
+        "GET",
+        f"/v1/interviews/{session_id}/configuration",
+        allowed_statuses={200, 404, 502, 503, 504},
     )
 
 

@@ -69,6 +69,7 @@ idempotent for a completed session; other invalid transitions return HTTP 409.
 
 - `POST /v1/interviews`
 - `GET /v1/interviews/{session_id}`
+- `GET /v1/interviews/{session_id}/configuration`
 - `POST /v1/interviews/{session_id}/start`
 - `POST /v1/interviews/{session_id}/complete`
 - `GET /v1/interviews/{session_id}/current-question`
@@ -81,12 +82,23 @@ Both applications expose the same `/v1/interviews` routes. Clients normally use
 the Public API on port 8000; it forwards to the Interview Service and preserves
 404/409/422/502/503/504 responses without exposing transport details.
 
+Session creation accepts the original BIC-005 body unchanged. Optional BIC-006
+configuration fields are `target_role` (2-120 characters), `experience_level`
+(`entry`, `mid`, `senior`), `category` (`technical`, `behavioral`, `hr`,
+`mixed`), `difficulty` (`beginner`, `intermediate`, `advanced`), and
+`question_limit` (1-20). Defaults are Software Engineer, mid, mixed,
+intermediate, and `AI_QUESTION_LIMIT`. The stable create/get session response is
+unchanged; retrieve the full durable configuration from the configuration route.
+
 ## AI provider configuration
 
 The default `AI_PROVIDER=mock` is deterministic, supports English (`en`) and
 Sinhala (`si`), requires no key, and is suitable for tests and local demos.
-Question limits are fixed on session creation from `AI_QUESTION_LIMIT` (1-20,
-default 5).
+Question limits default from `AI_QUESTION_LIMIT` (1-20, default 5) and can be
+overridden safely per session. Provider prompts are centralized and versioned,
+include role/category/difficulty and ordered context, request consistent output
+language, and allow standard English technical terminology in Sinhala answers.
+Provider/model Sinhala quality must still be validated independently.
 
 The real adapter uses the documented OpenAI Responses HTTP API and strict
 structured output. Configure it explicitly:
@@ -119,6 +131,23 @@ POST /v1/interviews
 {"id":"11111111-1111-4111-8111-111111111111","mode":"mock_interview","language":"en","status":"created"}
 ```
 
+A configured request remains compatible with the same response:
+
+```json
+{
+  "mode": "mock_interview",
+  "language": "si",
+  "target_role": "Platform Engineer",
+  "experience_level": "senior",
+  "category": "technical",
+  "difficulty": "advanced",
+  "question_limit": 3
+}
+```
+
+`GET /v1/interviews/{id}/configuration` returns those resolved values, including
+`preferred_language` and `question_limit`.
+
 ```json
 POST /v1/interviews/11111111-1111-4111-8111-111111111111/start
 
@@ -132,7 +161,7 @@ Retrieve and answer the current question:
 GET /v1/interviews/11111111-1111-4111-8111-111111111111/current-question
 
 200
-{"id":"22222222-2222-4222-8222-222222222222","sequence":1,"text":"Tell me about your professional background.","topic":"background","provider":"mock","model":"deterministic-interview-v1","created_at":"2026-11-11T08:00:00Z"}
+{"id":"22222222-2222-4222-8222-222222222222","sequence":1,"text":"Tell me about your professional background.","topic":"background","provider":"mock","model":"deterministic-interview-v2","created_at":"2026-11-11T08:00:00Z"}
 ```
 
 ```json
@@ -142,8 +171,8 @@ POST /v1/interviews/11111111-1111-4111-8111-111111111111/answers
 200
 {
   "answer":{"id":"33333333-3333-4333-8333-333333333333","question_id":"22222222-2222-4222-8222-222222222222","text":"I led a platform migration that cut deployment time by half.","created_at":"2026-11-11T08:01:00Z"},
-  "evaluation":{"id":"44444444-4444-4444-8444-444444444444","answer_id":"33333333-3333-4333-8333-333333333333","score":73,"feedback":"The answer is clear; add one more specific example.","strengths":["Directly addresses the question"],"improvements":["Include a measurable outcome"],"provider":"mock","model":"deterministic-interview-v1","created_at":"2026-11-11T08:01:00Z"},
-  "next_question":{"id":"55555555-5555-4555-8555-555555555555","sequence":2,"text":"Describe a difficult problem you solved.","topic":"problem solving","provider":"mock","model":"deterministic-interview-v1","created_at":"2026-11-11T08:01:00Z"},
+  "evaluation":{"id":"44444444-4444-4444-8444-444444444444","answer_id":"33333333-3333-4333-8333-333333333333","score":73,"feedback":"The answer is clear; add one more specific example.","strengths":["Directly addresses the question"],"improvements":["Include a measurable outcome"],"criteria":{"relevance":16,"technical_accuracy":14,"clarity":15,"completeness":14,"communication_quality":14},"learning_areas":["Structuring examples with evidence"],"provider":"mock","model":"deterministic-interview-v2","created_at":"2026-11-11T08:01:00Z"},
+  "next_question":{"id":"55555555-5555-4555-8555-555555555555","sequence":2,"text":"Following up on your previous answer: Describe a difficult problem you solved.","topic":"problem solving","provider":"mock","model":"deterministic-interview-v2","created_at":"2026-11-11T08:01:00Z"},
   "completed":false
 }
 ```
@@ -161,13 +190,18 @@ After automatic or explicit completion, `summary` returns:
   "strengths":["Clear communication"],
   "improvements":["Add more specific, measurable outcomes"],
   "provider":"mock",
-  "model":"deterministic-interview-v1",
+  "model":"deterministic-interview-v2",
   "created_at":"2026-11-11T08:05:00Z"
 }
 ```
 
 Only the current unanswered question accepts an answer. Duplicate answers,
 answers in a non-active session, and an unavailable summary return 409.
+
+The deterministic 100-point rubric assigns 0-20 each for relevance, technical
+accuracy, clarity, completeness, and communication quality. For non-technical
+questions, accuracy means factual/contextual accuracy. The total must equal the
+five scores. Feedback adds learning areas and avoids claims about employability.
 
 ## Local mock-provider demonstration
 
@@ -191,6 +225,30 @@ and creates ordered questions, unique candidate answers, unique evaluations,
 and unique final summaries with foreign keys, checks, indexes, provider/model
 metadata, and timezone-aware timestamps. Downgrades remove BIC-005 data, so run
 them only against disposable databases.
+
+Revision `20261111_0003` preserves existing rows while adding role, experience,
+category, difficulty, rubric criteria, and learning areas with safe defaults and
+database constraints. Its downgrade removes only the BIC-006 additions.
+
+## Optional paid-provider smoke validation
+
+The smoke script is never imported by pytest or Jenkins and requires three
+separate opt-ins: `AI_PROVIDER=openai`, `LIVE_PROVIDER_SMOKE_ENABLED=1`, and the
+literal confirmation argument. It validates typed responses, expected language,
+one question/evaluation/summary flow, and reports provider usage metadata when
+available without estimating a price or printing credentials.
+
+```powershell
+$env:AI_PROVIDER = 'openai'
+$env:LIVE_PROVIDER_SMOKE_ENABLED = '1'
+$env:OPENAI_API_KEY = '<local secret>'
+$env:OPENAI_MODEL = '<model available to your project>'
+uv run python scripts/live_provider_smoke.py --language en --confirm-paid-call I_CONFIRM_PAID_API_CALL
+uv run python scripts/live_provider_smoke.py --language si --confirm-paid-call I_CONFIRM_PAID_API_CALL
+```
+
+Each command makes three provider requests and can incur cost. Run only one at a
+time after reviewing the selected model and account limits.
 
 ## Test and quality checks
 
@@ -218,8 +276,13 @@ with an isolated test database.
 
 Jenkins requires no paid API key or provider access and needs no pipeline
 change. Its existing locked install, Ruff, pytest/JUnit, and dependency-audit
-stages cover this milestone. PostgreSQL integration remains opt-in through an
-isolated `TEST_DATABASE_URL` ending in `_test`.
+stages cover this milestone. `AI_PROVIDER` defaults to `mock`; the live smoke
+enablement variable remains unset. PostgreSQL integration remains opt-in through
+an isolated `TEST_DATABASE_URL` ending in `_test`.
+
+See [BIC-006 architecture and LiveKit readiness](docs/BIC-006-architecture.md)
+for service boundaries, the future voice-agent flow, and deferred security and
+reconnect requirements.
 
 ## Limitations and deferred scope
 

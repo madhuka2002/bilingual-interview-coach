@@ -11,6 +11,7 @@ from interview_service.ai.base import (
     AIProviderResponseError,
     AIProviderTimeoutError,
     ConversationTurn,
+    InterviewConfiguration,
     QuestionResult,
 )
 from interview_service.ai.config import get_ai_provider
@@ -145,6 +146,7 @@ class TimeoutProvider(MockAIProvider):
         language: str,
         sequence: int,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> QuestionResult:
         raise AIProviderTimeoutError("private timeout details")
 
@@ -157,6 +159,7 @@ class FailNextQuestionProvider(MockAIProvider):
         language: str,
         sequence: int,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> QuestionResult:
         if sequence == 2:
             raise AIProviderResponseError("private malformed details")
@@ -165,6 +168,7 @@ class FailNextQuestionProvider(MockAIProvider):
             language=language,
             sequence=sequence,
             history=history,
+            configuration=configuration,
         )
 
 

@@ -476,3 +476,40 @@ async def test_public_api_forwards_provider_timeout(
 
     assert response.status_code == 504
     assert response.json() == {"detail": "AI provider timed out"}
+
+
+@pytest.mark.anyio
+async def test_public_api_forwards_configuration_payload_and_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured_payload = {
+        **PAYLOAD,
+        "target_role": "Data Engineer",
+        "experience_level": "senior",
+        "category": "technical",
+        "difficulty": "advanced",
+        "question_limit": 3,
+    }
+
+    def handler(request: Request) -> Response:
+        if request.method == "POST":
+            assert json.loads(request.content) == configured_payload
+            return Response(201, json={"id": SESSION_ID, "status": "created"})
+        assert request.url.path == f"/v1/interviews/{SESSION_ID}/configuration"
+        return Response(200, json={"target_role": "Data Engineer"})
+
+    def fake_client() -> AsyncClient:
+        return AsyncClient(
+            transport=MockTransport(handler),
+            base_url="http://interview-service",
+        )
+
+    monkeypatch.setattr(api_main, "create_interview_service_client", fake_client)
+    transport = ASGITransport(app=api_main.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post("/v1/interviews", json=configured_payload)
+        config = await client.get(f"/v1/interviews/{SESSION_ID}/configuration")
+
+    assert created.status_code == 201
+    assert config.status_code == 200
+    assert config.json() == {"target_role": "Data Engineer"}

@@ -6,6 +6,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from interview_service.models import (
+    ExperienceLevel,
+    InterviewCategory,
+    InterviewDifficulty,
     InterviewLanguage,
     InterviewMode,
     InterviewStatus,
@@ -15,6 +18,19 @@ from interview_service.models import (
 class CreateInterviewRequest(BaseModel):
     mode: InterviewMode
     language: InterviewLanguage
+    target_role: str = Field(default="Software Engineer", min_length=2, max_length=120)
+    experience_level: ExperienceLevel = ExperienceLevel.MID
+    category: InterviewCategory = InterviewCategory.MIXED
+    difficulty: InterviewDifficulty = InterviewDifficulty.INTERMEDIATE
+    question_limit: int | None = Field(default=None, ge=1, le=20)
+
+    @field_validator("target_role")
+    @classmethod
+    def role_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("target role must not be blank")
+        return value
 
 
 class InterviewSessionResponse(BaseModel):
@@ -26,6 +42,18 @@ class InterviewSessionResponse(BaseModel):
     mode: InterviewMode
     language: InterviewLanguage
     status: InterviewStatus
+
+
+class InterviewConfigurationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    interview_id: UUID
+    target_role: str
+    experience_level: ExperienceLevel
+    category: InterviewCategory
+    difficulty: InterviewDifficulty
+    preferred_language: InterviewLanguage
+    question_limit: int
 
 
 class QuestionResponse(BaseModel):
@@ -71,6 +99,8 @@ class EvaluationResponse(BaseModel):
     feedback: str
     strengths: list[str]
     improvements: list[str]
+    criteria: dict[str, int]
+    learning_areas: list[str]
     provider: str
     model: str
     created_at: datetime

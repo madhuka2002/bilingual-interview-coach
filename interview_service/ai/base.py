@@ -3,7 +3,35 @@
 from dataclasses import dataclass
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class InterviewConfiguration(BaseModel):
+    """Provider-neutral, transport-independent interview configuration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    target_role: str = Field(min_length=2, max_length=120)
+    experience_level: str
+    category: str
+    difficulty: str
+    language: str
+
+
+class CriterionScores(BaseModel):
+    """Five equally weighted criteria, each worth 20 points."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    relevance: int = Field(ge=0, le=20)
+    technical_accuracy: int = Field(ge=0, le=20)
+    clarity: int = Field(ge=0, le=20)
+    completeness: int = Field(ge=0, le=20)
+    communication_quality: int = Field(ge=0, le=20)
+
+    @property
+    def total(self) -> int:
+        return sum(self.model_dump().values())
 
 
 class QuestionResult(BaseModel):
@@ -20,6 +48,14 @@ class EvaluationResult(BaseModel):
     feedback: str = Field(min_length=1, max_length=4000)
     strengths: list[str] = Field(min_length=1, max_length=10)
     improvements: list[str] = Field(min_length=1, max_length=10)
+    criteria: CriterionScores
+    learning_areas: list[str] = Field(min_length=1, max_length=10)
+
+    @model_validator(mode="after")
+    def score_matches_rubric(self) -> "EvaluationResult":
+        if self.score != self.criteria.total:
+            raise ValueError("score must equal the sum of the five rubric criteria")
+        return self
 
 
 class SummaryResult(BaseModel):
@@ -67,6 +103,7 @@ class AIProvider(Protocol):
         language: str,
         sequence: int,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> QuestionResult: ...
 
     def evaluate_answer(
@@ -77,6 +114,7 @@ class AIProvider(Protocol):
         question: str,
         answer: str,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> EvaluationResult: ...
 
     def summarize_interview(
@@ -85,4 +123,5 @@ class AIProvider(Protocol):
         mode: str,
         language: str,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> SummaryResult: ...

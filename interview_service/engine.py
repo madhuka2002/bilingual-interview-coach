@@ -10,6 +10,7 @@ from interview_service.ai.base import (
     AIProvider,
     AIProviderResponseError,
     ConversationTurn,
+    InterviewConfiguration,
 )
 from interview_service.models import (
     AnswerEvaluation,
@@ -69,6 +70,16 @@ def _history(interview: InterviewSession) -> list[ConversationTurn]:
     ]
 
 
+def _configuration(interview: InterviewSession) -> InterviewConfiguration:
+    return InterviewConfiguration(
+        target_role=interview.target_role,
+        experience_level=interview.experience_level,
+        category=interview.category,
+        difficulty=interview.difficulty,
+        language=interview.language,
+    )
+
+
 def _validate_provider_strings(*values: str) -> None:
     if any(not value.strip() for value in values):
         raise AIProviderResponseError("Provider response contained blank text")
@@ -94,6 +105,7 @@ def start_interview(
         language=interview.language,
         sequence=1,
         history=[],
+        configuration=_configuration(interview),
     )
     _validate_provider_strings(generated.text, generated.topic)
     transitioned = transition_interview(
@@ -172,6 +184,7 @@ def submit_answer(
         question=question.text,
         answer=answer_text,
         history=history[:-1],
+        configuration=_configuration(interview),
     )
     _validate_provider_strings(
         evaluation_result.feedback,
@@ -194,6 +207,7 @@ def submit_answer(
             mode=interview.mode,
             language=interview.language,
             history=completed_history,
+            configuration=_configuration(interview),
         )
         _validate_provider_strings(
             summary_result.summary,
@@ -206,6 +220,7 @@ def submit_answer(
             language=interview.language,
             sequence=question.sequence + 1,
             history=completed_history,
+            configuration=_configuration(interview),
         )
         _validate_provider_strings(generated_question.text, generated_question.topic)
 
@@ -216,6 +231,8 @@ def submit_answer(
         feedback=evaluation_result.feedback.strip(),
         strengths=evaluation_result.strengths,
         improvements=evaluation_result.improvements,
+        criteria=evaluation_result.criteria.model_dump(),
+        learning_areas=evaluation_result.learning_areas,
         provider=provider.name,
         model=provider.model,
     )
@@ -276,6 +293,7 @@ def complete_interview(
         mode=interview.mode,
         language=interview.language,
         history=_history(interview),
+        configuration=_configuration(interview),
     )
     _validate_provider_strings(
         summary_result.summary,
@@ -305,3 +323,19 @@ def complete_interview(
 
 def get_history(session: Session, interview_id: UUID) -> InterviewSession | None:
     return _loaded_interview(session, interview_id)
+
+
+def get_feedback(
+    session: Session,
+    interview_id: UUID,
+) -> tuple[InterviewSession | None, list[AnswerEvaluation]]:
+    """Return persisted evaluations without depending on an HTTP transport."""
+    interview = _loaded_interview(session, interview_id)
+    if interview is None:
+        return None, []
+    evaluations = [
+        question.answer.evaluation
+        for question in interview.questions
+        if question.answer and question.answer.evaluation
+    ]
+    return interview, evaluations

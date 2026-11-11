@@ -1,8 +1,10 @@
-"""Deterministic AI provider for tests and local demonstrations."""
+"""Deterministic bilingual provider for tests and local demonstrations."""
 
 from interview_service.ai.base import (
     ConversationTurn,
+    CriterionScores,
     EvaluationResult,
+    InterviewConfiguration,
     QuestionResult,
     SummaryResult,
 )
@@ -10,7 +12,7 @@ from interview_service.ai.base import (
 
 class MockAIProvider:
     name = "mock"
-    model = "deterministic-interview-v1"
+    model = "deterministic-interview-v2"
 
     _questions = {
         "en": [
@@ -36,9 +38,25 @@ class MockAIProvider:
         language: str,
         sequence: int,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> QuestionResult:
-        questions = self._questions[language]
-        topic, text = questions[(sequence - 1) % len(questions)]
+        topic, text = self._questions[language][(sequence - 1) % 5]
+        if sequence == 1 and configuration.target_role != "Software Engineer":
+            if language == "si":
+                text = f"{configuration.target_role} භූමිකාවට අදාළ ඔබගේ පසුබිම ගැන කියන්න."
+            else:
+                text = (
+                    f"Tell me about your background relevant to the "
+                    f"{configuration.target_role} role."
+                )
+        elif history and history[-1].answer:
+            if language == "si":
+                text = (
+                    f"ඔබගේ පෙර පිළිතුර මත පදනම්ව, {text} "
+                    "API වැනි technical terms අවශ්‍ය පරිදි භාවිත කරන්න."
+                )
+            else:
+                text = f"Following up on your previous answer: {text}"
         if mode == "career_coach":
             text = (
                 f"Career coaching question: {text}"
@@ -55,20 +73,33 @@ class MockAIProvider:
         question: str,
         answer: str,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> EvaluationResult:
-        score = min(95, 55 + len(answer.split()) * 2)
+        word_count = len(answer.split())
+        evidence_bonus = 2 if any(char.isdigit() for char in answer) else 0
+        criteria = CriterionScores(
+            relevance=min(20, 10 + word_count // 3),
+            technical_accuracy=min(20, 10 + word_count // 5),
+            clarity=min(20, 11 + word_count // 4),
+            completeness=min(20, 8 + word_count // 3 + evidence_bonus),
+            communication_quality=min(20, 11 + word_count // 5),
+        )
         if language == "si":
             return EvaluationResult(
-                score=score,
-                feedback="පිළිතුර පැහැදිලිය; නිශ්චිත උදාහරණයක් තවත් එක් කරන්න.",
+                score=criteria.total,
+                criteria=criteria,
+                feedback="පිළිතුර පැහැදිලිය; තවත් නිශ්චිත උදාහරණයක් එක් කරන්න.",
                 strengths=["ප්‍රශ්නයට සෘජුව පිළිතුරු දී ඇත"],
                 improvements=["මැනිය හැකි ප්‍රතිඵලයක් එක් කරන්න"],
+                learning_areas=["උදාහරණ සමඟ structured communication"],
             )
         return EvaluationResult(
-            score=score,
+            score=criteria.total,
+            criteria=criteria,
             feedback="The answer is clear; add one more specific example.",
             strengths=["Directly addresses the question"],
             improvements=["Include a measurable outcome"],
+            learning_areas=["Structuring examples with evidence"],
         )
 
     def summarize_interview(
@@ -77,6 +108,7 @@ class MockAIProvider:
         mode: str,
         language: str,
         history: list[ConversationTurn],
+        configuration: InterviewConfiguration,
     ) -> SummaryResult:
         scores = [turn.score for turn in history if turn.score is not None]
         overall_score = round(sum(scores) / len(scores)) if scores else 0
