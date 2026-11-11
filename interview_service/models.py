@@ -4,8 +4,19 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, Uuid
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utc_now() -> datetime:
@@ -62,6 +73,10 @@ class InterviewSession(Base):
             "completed_at IS NULL OR completed_at >= started_at",
             name="ck_interview_sessions_timestamp_order",
         ),
+        CheckConstraint(
+            "max_questions >= 1 AND max_questions <= 20",
+            name="ck_interview_sessions_max_questions",
+        ),
         Index("ix_interview_sessions_status", "status"),
         Index("ix_interview_sessions_created_at", "created_at"),
     )
@@ -89,3 +104,135 @@ class InterviewSession(Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    max_questions: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    questions: Mapped[list["InterviewQuestion"]] = relationship(
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        order_by="InterviewQuestion.sequence",
+    )
+    summary: Mapped["InterviewSummary | None"] = relationship(
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class InterviewQuestion(Base):
+    """An ordered, provider-generated question in an interview."""
+
+    __tablename__ = "interview_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "interview_id",
+            "sequence",
+            name="uq_interview_questions_interview_sequence",
+        ),
+        CheckConstraint("sequence >= 1", name="ck_interview_questions_sequence"),
+        Index("ix_interview_questions_interview_id", "interview_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    interview_id: Mapped[UUID] = mapped_column(
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(String(120), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    interview: Mapped[InterviewSession] = relationship(back_populates="questions")
+    answer: Mapped["CandidateAnswer | None"] = relationship(
+        back_populates="question",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class CandidateAnswer(Base):
+    """A candidate's single answer to an interview question."""
+
+    __tablename__ = "candidate_answers"
+    __table_args__ = (
+        UniqueConstraint("question_id", name="uq_candidate_answers_question_id"),
+        Index("ix_candidate_answers_question_id", "question_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    question_id: Mapped[UUID] = mapped_column(
+        ForeignKey("interview_questions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    question: Mapped[InterviewQuestion] = relationship(back_populates="answer")
+    evaluation: Mapped["AnswerEvaluation | None"] = relationship(
+        back_populates="answer",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class AnswerEvaluation(Base):
+    """Structured AI feedback for exactly one candidate answer."""
+
+    __tablename__ = "answer_evaluations"
+    __table_args__ = (
+        UniqueConstraint("answer_id", name="uq_answer_evaluations_answer_id"),
+        CheckConstraint(
+            "score >= 0 AND score <= 100",
+            name="ck_answer_evaluations_score",
+        ),
+        Index("ix_answer_evaluations_answer_id", "answer_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    answer_id: Mapped[UUID] = mapped_column(
+        ForeignKey("candidate_answers.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    score: Mapped[int] = mapped_column(Integer, nullable=False)
+    feedback: Mapped[str] = mapped_column(Text, nullable=False)
+    strengths: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    improvements: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    answer: Mapped[CandidateAnswer] = relationship(back_populates="evaluation")
+
+
+class InterviewSummary(Base):
+    """Final provider-generated feedback for a completed interview."""
+
+    __tablename__ = "interview_summaries"
+    __table_args__ = (
+        UniqueConstraint("interview_id", name="uq_interview_summaries_interview_id"),
+        CheckConstraint(
+            "overall_score >= 0 AND overall_score <= 100",
+            name="ck_interview_summaries_overall_score",
+        ),
+        Index("ix_interview_summaries_interview_id", "interview_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    interview_id: Mapped[UUID] = mapped_column(
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    strengths: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    improvements: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    interview: Mapped[InterviewSession] = relationship(back_populates="summary")
