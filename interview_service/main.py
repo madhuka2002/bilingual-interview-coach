@@ -39,8 +39,11 @@ from interview_service.schemas import (
     SubmitAnswerRequest,
     SubmitAnswerResponse,
     SummaryResponse,
+    VoiceTokenResponse,
 )
 from interview_service.services import get_interview
+from interview_service.voice.config import LiveKitSettings, VoiceConfigurationError
+from interview_service.voice.tokens import issue_candidate_token
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Bilingual Interview Coach Interview Service")
@@ -329,3 +332,30 @@ def get_interview_summary(
             status_code=409, detail="Interview summary is not available"
         )
     return interview.summary
+
+
+@app.post(
+    "/v1/interviews/{session_id}/voice/token",
+    response_model=VoiceTokenResponse,
+)
+def create_voice_token(
+    session_id: str,
+    database_session: DatabaseSession,
+) -> VoiceTokenResponse:
+    """Issue a narrow, short-lived token for the server-bound candidate room."""
+    interview = require_interview(database_session, session_id)
+    try:
+        settings = LiveKitSettings.from_env()
+        room, token = issue_candidate_token(database_session, interview, settings)
+    except VoiceConfigurationError as error:
+        logger.warning("Voice token configuration unavailable: %s", error)
+        raise HTTPException(
+            status_code=503, detail="Voice service is not configured"
+        ) from error
+    return VoiceTokenResponse(
+        server_url=settings.url,
+        participant_token=token,
+        room_name=room.room_name,
+        participant_identity=room.candidate_identity,
+        expires_in=settings.token_ttl_seconds,
+    )

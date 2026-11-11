@@ -76,10 +76,42 @@ class MockAIProvider:
         configuration: InterviewConfiguration,
     ) -> EvaluationResult:
         word_count = len(answer.split())
+        stop_words = {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "to",
+            "of",
+            "and",
+            "how",
+            "what",
+            "you",
+            "your",
+            "i",
+            "it",
+            "do",
+            "can",
+            "about",
+        }
+        question_terms = {
+            token.strip(".,?!:;()[]{}'").casefold()
+            for token in question.split()
+            if len(token.strip(".,?!:;()[]{}'")) > 2
+            and token.strip(".,?!:;()[]{}'").casefold() not in stop_words
+        }
+        answer_terms = {
+            token.strip(".,?!:;()[]{}'").casefold()
+            for token in answer.split()
+            if len(token.strip(".,?!:;()[]{}'")) > 2
+        }
+        overlap = len(question_terms & answer_terms)
+        relevant = bool(overlap)
         evidence_bonus = 2 if any(char.isdigit() for char in answer) else 0
         criteria = CriterionScores(
-            relevance=min(20, 10 + word_count // 3),
-            technical_accuracy=min(20, 10 + word_count // 5),
+            relevance=min(20, 4 + overlap * 4) if relevant else 2,
+            technical_accuracy=min(20, 5 + word_count // 6) if relevant else 2,
             clarity=min(20, 11 + word_count // 4),
             completeness=min(20, 8 + word_count // 3 + evidence_bonus),
             communication_quality=min(20, 11 + word_count // 5),
@@ -96,9 +128,22 @@ class MockAIProvider:
         return EvaluationResult(
             score=criteria.total,
             criteria=criteria,
-            feedback="The answer is clear; add one more specific example.",
-            strengths=["Directly addresses the question"],
-            improvements=["Include a measurable outcome"],
+            feedback=(
+                "SIMULATED MOCK FEEDBACK: The answer shares terms with the question; "
+                "this offline heuristic cannot verify correctness."
+                if relevant
+                else (
+                    "SIMULATED MOCK FEEDBACK: The answer appears unrelated or "
+                    "incomplete; connect it directly to the question. This "
+                    "heuristic cannot verify correctness."
+                )
+            ),
+            strengths=[
+                "Contains question-related terms"
+                if relevant
+                else "No reliable strength inferred by mock mode"
+            ],
+            improvements=["Add specific evidence and a direct explanation"],
             learning_areas=["Structuring examples with evidence"],
         )
 

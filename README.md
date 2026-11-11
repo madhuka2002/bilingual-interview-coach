@@ -230,6 +230,10 @@ Revision `20261111_0003` preserves existing rows while adding role, experience,
 category, difficulty, rubric criteria, and learning areas with safe defaults and
 database constraints. Its downgrade removes only the BIC-006 additions.
 
+Revision `20261111_0004` adds one server-owned LiveKit room binding per
+interview and idempotent finalized-transcript records. Its downgrade removes
+only BIC-007 voice transport data.
+
 ## Optional paid-provider smoke validation
 
 The smoke script is never imported by pytest or Jenkins and requires three
@@ -284,10 +288,138 @@ See [BIC-006 architecture and LiveKit readiness](docs/BIC-006-architecture.md)
 for service boundaries, the future voice-agent flow, and deferred security and
 reconnect requirements.
 
+## LiveKit voice interview prototype
+
+BIC-007 adds LiveKit as a transport over the BIC-006 engine. The worker never
+generates questions or scores: it starts or resumes the durable interview,
+speaks the persisted current question, submits only finalized STT text to the
+existing engine, speaks the returned next question, and retrieves the persisted
+summary on completion. Speech configuration is independent of `AI_PROVIDER`.
+
+The installed and locked integration versions are `livekit-agents==1.8.11`,
+`livekit-api==1.2.2`, and `livekit-plugins-google==1.8.11`. The local server
+image is pinned to `livekit/livekit-server:v1.13.11`; LiveKit Cloud can be used
+by setting the same URL/key/secret variables and omitting the local container.
+
+### Local voice setup (PowerShell)
+
+Generate a unique development key pair. Copy the two generated values into the
+untracked `.env` file as `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`; do not use
+the documented LiveKit placeholder secret and do not commit `.env`.
+
+```powershell
+docker run --rm livekit/livekit-server:v1.13.11 generate-keys
+Copy-Item .env.example .env
+# Edit .env and set the generated LiveKit values plus the PostgreSQL password.
+```
+
+Load the secrets into the current PowerShell process (the Python processes do
+not parse `.env` automatically), then start the unchanged PostgreSQL service
+and the development-only LiveKit profile:
+
+```powershell
+$env:DATABASE_URL = (Get-Content .env | Where-Object { $_ -like 'DATABASE_URL=*' }) -replace '^DATABASE_URL=', ''
+$env:LIVEKIT_URL = (Get-Content .env | Where-Object { $_ -like 'LIVEKIT_URL=*' }) -replace '^LIVEKIT_URL=', ''
+$env:LIVEKIT_API_KEY = (Get-Content .env | Where-Object { $_ -like 'LIVEKIT_API_KEY=*' }) -replace '^LIVEKIT_API_KEY=', ''
+$env:LIVEKIT_API_SECRET = (Get-Content .env | Where-Object { $_ -like 'LIVEKIT_API_SECRET=*' }) -replace '^LIVEKIT_API_SECRET=', ''
+$env:LIVEKIT_AGENT_NAME = 'bic-interviewer'
+docker compose --profile voice up -d postgres livekit
+uv run alembic upgrade head
+```
+
+Google Cloud Speech is one real prototype adapter. Enabling it can incur
+provider charges, so no command, test, or Jenkins stage enables it
+automatically. After enabling Cloud Speech-to-Text and Text-to-Speech in your
+own project, set credentials and English defaults in the worker window:
+
+```powershell
+$env:VOICE_AUDIO_PROVIDER = 'google'
+$env:GOOGLE_APPLICATION_CREDENTIALS = 'C:\path\to\untracked-service-account.json'
+$env:GOOGLE_CLOUD_PROJECT = '<your-project-id>'
+$env:GOOGLE_STT_LOCATION = 'global'
+$env:GOOGLE_STT_MODEL_EN = 'latest_long'
+$env:GOOGLE_TTS_MODEL = 'gemini-2.5-flash-tts'
+$env:GOOGLE_TTS_VOICE_EN = 'Kore'
+$env:VOICE_STT_TIMEOUT_SECONDS = '10'
+$env:VOICE_TTS_TIMEOUT_SECONDS = '10'
+```
+
+Alternatively, LiveKit Cloud Inference uses the LiveKit Cloud project's key and
+secret. It does not call an interview LLM: keep `AI_PROVIDER=mock` (or use the
+existing configured BIC AI provider). Models and TTS voices are configurable;
+the defaults are `deepgram/nova-3` + `google/gemini-3.8-flash-lite-tts` with
+voice `Kore` for English, and `cartesia/ink-whisper` + the same Gemini TTS model
+and voice for Sinhala. LiveKit currently lists each model for these languages.
+If you override the IDs with unsupported values, worker startup fails clearly.
+No model fallback is configured. Do not use LiveKit local-server credentials
+for inference; set Cloud credentials in the worker process:
+
+```powershell
+$env:VOICE_AUDIO_PROVIDER = 'livekit_inference'
+$env:LIVEKIT_INFERENCE_API_KEY = '<your-livekit-cloud-api-key>'
+$env:LIVEKIT_INFERENCE_API_SECRET = '<your-livekit-cloud-api-secret>'
+$env:LIVEKIT_INFERENCE_STT_MODEL_EN = 'deepgram/nova-3'
+$env:LIVEKIT_INFERENCE_STT_MODEL_SI = 'cartesia/ink-whisper'
+$env:LIVEKIT_INFERENCE_TTS_MODEL = 'google/gemini-3.8-flash-lite-tts'
+$env:LIVEKIT_INFERENCE_TTS_VOICE_EN = 'Kore'
+$env:LIVEKIT_INFERENCE_TTS_VOICE_SI = 'Kore'
+```
+
+Keep `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` configured for
+the worker's LiveKit connection as before. Cloud Inference can incur charges;
+tests construct mocked adapters and never make inference requests.
+
+Start these three processes in separate PowerShell windows after loading
+`DATABASE_URL` and the LiveKit variables into each one:
+
+```powershell
+uv run uvicorn interview_service.main:app --host 127.0.0.1 --port 8001
+```
+
+```powershell
+$env:INTERVIEW_SERVICE_URL = 'http://127.0.0.1:8001'
+uv run uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+```powershell
+# Also set the selected provider variables above in this worker window.
+uv run python -m interview_service.voice.worker dev
+```
+
+Create an interview and open `http://127.0.0.1:8000/voice-demo`:
+
+```powershell
+$created = Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/v1/interviews -ContentType application/json -Body '{"mode":"mock_interview","language":"en","question_limit":2}'
+$created.id
+```
+
+Paste that opaque interview UUID into the demo. The demo requests a server-made
+token, publishes only the microphone, plays the agent's audio, and polls the
+existing API for the current question and completion state.
+
+For LiveKit Cloud, set `LIVEKIT_URL` to the project's `wss://` URL and use its
+API key/secret; start only `postgres`, not the Compose `livekit` profile.
+
+### Sinhala capability and limitations
+
+Google Cloud STT documents `si-LK` on specific Chirp models and regions. Google
+Gemini-TTS lists Sinhala as Preview. To prevent accidental claims or calls, a
+Sinhala worker refuses to start unless `GOOGLE_TTS_VOICE_SI` is explicitly set
+to a voice validated in the selected project, model, and region. Configure the
+documented supported STT region/model (for example `chirp_2`) and a Gemini-TTS
+voice, then test code-switching, accents, latency, and transcription/synthesis
+quality yourself. Availability is not a claim of equivalent or production-grade
+Sinhala quality. Deepgram Nova-3's current LiveKit language list does not list
+Sinhala, so it is not exposed as a Sinhala option here.
+
+See [BIC-007 architecture](docs/BIC-007-architecture.md) for lifecycle,
+security, persistence, reconnect behavior, and remaining production gaps.
+
 ## Limitations and deferred scope
 
 - **AUTH-001:** Add OAuth2/OIDC authentication and JWT validation.
-- Text answers only; frontend, voice, and speech processing are not included.
+- The REST experience remains text-first; the included voice page is a local
+  verification client, not the BIC-008 production frontend.
 - Prompt quality and production model selection need evaluation against real
   interview rubrics before a real provider is enabled.
 - Provider calls are synchronous and bounded; background processing, streaming,

@@ -1,22 +1,30 @@
 """Public API application entry point."""
 
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from httpx import AsyncClient, RequestError, TimeoutException
 
 app = FastAPI(title="Bilingual Interview Coach API")
 
 DEFAULT_INTERVIEW_SERVICE_URL = "http://127.0.0.1:8001"
 INTERVIEW_SERVICE_TIMEOUT_SECONDS = 5.0
+VOICE_DEMO_PATH = Path(__file__).with_name("static") / "voice-demo.html"
 
 
 @app.get("/health")
 async def health() -> dict[str, str]:
     """Report that the public API process is healthy."""
     return {"status": "ok", "service": "api"}
+
+
+@app.get("/voice-demo", include_in_schema=False)
+async def voice_demo() -> FileResponse:
+    """Serve the intentionally minimal BIC-007 browser test client."""
+    return FileResponse(VOICE_DEMO_PATH)
 
 
 def create_interview_service_client() -> AsyncClient:
@@ -156,5 +164,15 @@ async def get_interview_summary(session_id: str) -> JSONResponse:
     return await forward_interview_request(
         "GET",
         f"/v1/interviews/{session_id}/summary",
+        allowed_statuses={200, 404, 409, 502, 503, 504},
+    )
+
+
+@app.post("/v1/interviews/{session_id}/voice/token")
+async def create_voice_token(session_id: str) -> JSONResponse:
+    """Forward server-side token issuance without accepting room or identity input."""
+    return await forward_interview_request(
+        "POST",
+        f"/v1/interviews/{session_id}/voice/token",
         allowed_statuses={200, 404, 409, 502, 503, 504},
     )
