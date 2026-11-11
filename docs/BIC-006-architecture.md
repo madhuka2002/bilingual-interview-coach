@@ -38,7 +38,11 @@ completeness, and communication quality. The overall 0–100 score must equal th
 sum. Feedback contains strengths, improvements, and learning areas. Prompts
 prohibit unsupported employability or broad competence claims.
 
-## Future LiveKit Agents flow
+## LiveKit handoff
+
+BIC-007 implements the following flow as an additive transport. See
+`docs/BIC-007-architecture.md` for the realized persistence, security, worker,
+provider, reconnect, and demo design.
 
 1. An authenticated application creates or resumes an Interview Service
    session and issues a short-lived room/session token.

@@ -10,6 +10,7 @@ from interview_service.ai.base import (
     AIProviderTimeoutError,
     InterviewConfiguration,
 )
+from interview_service.ai.mock import MockAIProvider
 from interview_service.ai.openai import OpenAIProvider
 
 CONFIGURATION = InterviewConfiguration(
@@ -19,6 +20,30 @@ CONFIGURATION = InterviewConfiguration(
     difficulty="intermediate",
     language="en",
 )
+
+
+def test_mock_evaluation_is_labeled_and_penalizes_irrelevant_answer() -> None:
+    provider = MockAIProvider()
+    unrelated = provider.evaluate_answer(
+        mode="mock_interview",
+        language="en",
+        question="How would you design a cache for a web service?",
+        answer="I enjoy cooking pasta with my family every Sunday.",
+        history=[],
+        configuration=CONFIGURATION,
+    )
+    related = provider.evaluate_answer(
+        mode="mock_interview",
+        language="en",
+        question="How would you design a cache for a web service?",
+        answer="I would use a cache with an eviction policy.",
+        history=[],
+        configuration=CONFIGURATION,
+    )
+
+    assert unrelated.score < related.score
+    assert "SIMULATED MOCK FEEDBACK" in unrelated.feedback
+    assert "unrelated" in unrelated.feedback
 
 
 def completed_response(payload: dict) -> dict:

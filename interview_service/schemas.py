@@ -141,3 +141,11 @@ class InterviewHistoryResponse(BaseModel):
 class InterviewFeedbackResponse(BaseModel):
     interview_id: UUID
     evaluations: list[EvaluationResponse]
+
+
+class VoiceTokenResponse(BaseModel):
+    server_url: str
+    participant_token: str
+    room_name: str
+    participant_identity: str
+    expires_in: int

@@ -65,6 +65,7 @@ def _history(interview: InterviewSession) -> list[ConversationTurn]:
                 if question.answer and question.answer.evaluation
                 else None
             ),
+            skipped=question.skipped,
         )
         for question in sorted(interview.questions, key=lambda item: item.sequence)
     ]
@@ -143,7 +144,9 @@ def current_question(
             f"Interview session is {interview.status}; an active session is required"
         )
     unanswered = [
-        question for question in interview.questions if question.answer is None
+        question
+        for question in interview.questions
+        if question.answer is None and not question.skipped
     ]
     if len(unanswered) != 1:
         raise InterviewConflictError("Interview session has no current question")
@@ -166,7 +169,7 @@ def submit_answer(
     )
     if question is None:
         raise InterviewConflictError("Question does not belong to this interview")
-    if question.answer is not None:
+    if question.answer is not None or question.skipped:
         raise InterviewConflictError("An answer has already been submitted")
     if interview.status != InterviewStatus.ACTIVE:
         raise InterviewConflictError(
@@ -273,6 +276,70 @@ def submit_answer(
         next_question=next_question,
         completed=summary_result is not None,
     )
+
+
+def skip_question(
+    session: Session, interview_id: UUID, question_id: UUID, provider: AIProvider
+) -> InterviewSession | None:
+    """Record a skipped question without manufacturing candidate speech."""
+    interview = _loaded_interview(session, interview_id)
+    if interview is None:
+        return None
+    question = next(
+        (item for item in interview.questions if item.id == question_id), None
+    )
+    if question is None or question.answer is not None or question.skipped:
+        raise InterviewConflictError("Question cannot be skipped in its current state")
+    if interview.status != InterviewStatus.ACTIVE or question.sequence != max(
+        item.sequence for item in interview.questions
+    ):
+        raise InterviewConflictError("Only the current active question can be skipped")
+    question.skipped = True
+    history = _history(interview)
+    if question.sequence >= interview.max_questions:
+        result = provider.summarize_interview(
+            mode=interview.mode,
+            language=interview.language,
+            history=history,
+            configuration=_configuration(interview),
+        )
+        session.add(
+            InterviewSummary(
+                interview=interview,
+                overall_score=result.overall_score,
+                summary=result.summary.strip(),
+                strengths=result.strengths,
+                improvements=result.improvements,
+                provider=provider.name,
+                model=provider.model,
+            )
+        )
+        transition_interview(
+            session,
+            interview.id,
+            expected_status=InterviewStatus.ACTIVE,
+            target_status=InterviewStatus.COMPLETED,
+        )
+    else:
+        generated = provider.generate_question(
+            mode=interview.mode,
+            language=interview.language,
+            sequence=question.sequence + 1,
+            history=history,
+            configuration=_configuration(interview),
+        )
+        session.add(
+            InterviewQuestion(
+                interview=interview,
+                sequence=question.sequence + 1,
+                text=generated.text.strip(),
+                topic=generated.topic.strip(),
+                provider=provider.name,
+                model=provider.model,
+            )
+        )
+    session.flush()
+    return interview
 
 
 def complete_interview(

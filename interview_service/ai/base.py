@@ -74,6 +74,7 @@ class ConversationTurn:
     answer: str | None = None
     score: int | None = None
     feedback: str | None = None
+    skipped: bool = False
 
 
 class AIProviderError(Exception):

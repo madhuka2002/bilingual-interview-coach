@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -158,6 +159,11 @@ class InterviewSession(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    voice_room: Mapped["VoiceRoom | None"] = relationship(
+        back_populates="interview",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class InterviewQuestion(Base):
@@ -181,6 +187,8 @@ class InterviewQuestion(Base):
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    skipped: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    skipped: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     topic: Mapped[str] = mapped_column(String(120), nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -281,3 +289,71 @@ class InterviewSummary(Base):
         DateTime(timezone=True), nullable=False, default=utc_now
     )
     interview: Mapped[InterviewSession] = relationship(back_populates="summary")
+
+
+class VoiceRoom(Base):
+    """Server-owned LiveKit room binding for one durable interview."""
+
+    __tablename__ = "voice_rooms"
+    __table_args__ = (
+        UniqueConstraint("interview_id", name="uq_voice_rooms_interview_id"),
+        UniqueConstraint("room_name", name="uq_voice_rooms_room_name"),
+        UniqueConstraint(
+            "candidate_identity", name="uq_voice_rooms_candidate_identity"
+        ),
+        Index("ix_voice_rooms_interview_id", "interview_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    interview_id: Mapped[UUID] = mapped_column(
+        ForeignKey("interview_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    room_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    candidate_identity: Mapped[str] = mapped_column(String(80), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    last_connected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    interview: Mapped[InterviewSession] = relationship(back_populates="voice_room")
+    transcripts: Mapped[list["VoiceTranscript"]] = relationship(
+        back_populates="voice_room", cascade="all, delete-orphan"
+    )
+
+
+class VoiceTranscript(Base):
+    """A finalized STT event submitted through the voice transport."""
+
+    __tablename__ = "voice_transcripts"
+    __table_args__ = (
+        UniqueConstraint(
+            "voice_room_id", "event_id", name="uq_voice_transcripts_room_event"
+        ),
+        UniqueConstraint("question_id", name="uq_voice_transcripts_question_id"),
+        CheckConstraint(
+            "status IN ('received', 'processed')",
+            name="ck_voice_transcripts_status",
+        ),
+        Index("ix_voice_transcripts_voice_room_id", "voice_room_id"),
+        Index("ix_voice_transcripts_question_id", "question_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    voice_room_id: Mapped[UUID] = mapped_column(
+        ForeignKey("voice_rooms.id", ondelete="CASCADE"), nullable=False
+    )
+    question_id: Mapped[UUID] = mapped_column(
+        ForeignKey("interview_questions.id", ondelete="CASCADE"), nullable=False
+    )
+    event_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    participant_identity: Mapped[str] = mapped_column(String(80), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="received")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    voice_room: Mapped[VoiceRoom] = relationship(back_populates="transcripts")
