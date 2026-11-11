@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from interview_service.models import InterviewSession, InterviewStatus, utc_now
 
 
-@dataclass(frozen=True)
+@dataclass
 class InvalidTransitionError(Exception):
     current_status: str
     requested_status: str
@@ -48,8 +48,10 @@ def transition_interview(
     )
     if result.rowcount == 1:
         session.flush()
+        session.expire_all()
         return get_interview(session, session_id)
 
+    session.expire_all()
     current = get_interview(session, session_id)
     if current is None:
         return None

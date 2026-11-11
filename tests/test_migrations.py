@@ -31,11 +31,19 @@ def test_migration_upgrade_and_downgrade(
         "updated_at",
         "started_at",
         "completed_at",
+        "max_questions",
     }
     assert {index["name"] for index in inspector.get_indexes("interview_sessions")} == {
         "ix_interview_sessions_created_at",
         "ix_interview_sessions_status",
     }
+    assert {
+        "answer_evaluations",
+        "candidate_answers",
+        "interview_questions",
+        "interview_sessions",
+        "interview_summaries",
+    } <= set(inspector.get_table_names())
 
     command.downgrade(config, "base")
 

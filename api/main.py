@@ -89,7 +89,7 @@ async def start_interview_session(session_id: str) -> JSONResponse:
     return await forward_interview_request(
         "POST",
         f"/v1/interviews/{session_id}/start",
-        allowed_statuses={200, 404, 409},
+        allowed_statuses={200, 404, 409, 502, 503, 504},
     )
 
 
@@ -98,5 +98,54 @@ async def complete_interview_session(session_id: str) -> JSONResponse:
     return await forward_interview_request(
         "POST",
         f"/v1/interviews/{session_id}/complete",
-        allowed_statuses={200, 404, 409},
+        allowed_statuses={200, 404, 409, 502, 503, 504},
+    )
+
+
+@app.get("/v1/interviews/{session_id}/current-question")
+async def get_current_question(session_id: str) -> JSONResponse:
+    return await forward_interview_request(
+        "GET",
+        f"/v1/interviews/{session_id}/current-question",
+        allowed_statuses={200, 404, 409, 502, 503, 504},
+    )
+
+
+@app.post("/v1/interviews/{session_id}/answers")
+async def submit_interview_answer(
+    session_id: str,
+    payload: dict[str, Any],
+) -> JSONResponse:
+    return await forward_interview_request(
+        "POST",
+        f"/v1/interviews/{session_id}/answers",
+        allowed_statuses={200, 404, 409, 422, 502, 503, 504},
+        json=payload,
+    )
+
+
+@app.get("/v1/interviews/{session_id}/history")
+async def get_interview_history(session_id: str) -> JSONResponse:
+    return await forward_interview_request(
+        "GET",
+        f"/v1/interviews/{session_id}/history",
+        allowed_statuses={200, 404, 502, 503, 504},
+    )
+
+
+@app.get("/v1/interviews/{session_id}/feedback")
+async def get_interview_feedback(session_id: str) -> JSONResponse:
+    return await forward_interview_request(
+        "GET",
+        f"/v1/interviews/{session_id}/feedback",
+        allowed_statuses={200, 404, 502, 503, 504},
+    )
+
+
+@app.get("/v1/interviews/{session_id}/summary")
+async def get_interview_summary(session_id: str) -> JSONResponse:
+    return await forward_interview_request(
+        "GET",
+        f"/v1/interviews/{session_id}/summary",
+        allowed_statuses={200, 404, 409, 502, 503, 504},
     )

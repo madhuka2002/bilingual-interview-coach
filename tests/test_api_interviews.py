@@ -412,3 +412,67 @@ async def test_interview_service_client_configuration(
         assert client.timeout.read == api_main.INTERVIEW_SERVICE_TIMEOUT_SECONDS
         assert client.timeout.write == api_main.INTERVIEW_SERVICE_TIMEOUT_SECONDS
         assert client.timeout.pool == api_main.INTERVIEW_SERVICE_TIMEOUT_SECONDS
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "suffix", "service_status"),
+    [
+        ("GET", "current-question", 200),
+        ("GET", "history", 200),
+        ("GET", "feedback", 200),
+        ("GET", "summary", 409),
+        ("POST", "answers", 200),
+    ],
+)
+async def test_public_api_forwards_interview_engine_routes(
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    suffix: str,
+    service_status: int,
+) -> None:
+    answer_payload = {"question_id": SESSION_ID, "text": "My answer"}
+
+    def handler(request: Request) -> Response:
+        assert request.method == method
+        assert request.url.path == f"/v1/interviews/{SESSION_ID}/{suffix}"
+        if suffix == "answers":
+            assert json.loads(request.content) == answer_payload
+        return Response(service_status, json={"route": suffix})
+
+    def fake_client() -> AsyncClient:
+        return AsyncClient(
+            transport=MockTransport(handler),
+            base_url="http://interview-service",
+        )
+
+    monkeypatch.setattr(api_main, "create_interview_service_client", fake_client)
+    transport = ASGITransport(app=api_main.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        if method == "POST":
+            response = await client.post(
+                f"/v1/interviews/{SESSION_ID}/{suffix}",
+                json=answer_payload,
+            )
+        else:
+            response = await client.get(f"/v1/interviews/{SESSION_ID}/{suffix}")
+
+    assert response.status_code == service_status
+    assert response.json() == {"route": suffix}
+
+
+@pytest.mark.anyio
+async def test_public_api_forwards_provider_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: Request) -> Response:
+        return Response(504, json={"detail": "AI provider timed out"})
+
+    response = await post_lifecycle_action(
+        monkeypatch,
+        handler,
+        "start",
+    )
+
+    assert response.status_code == 504
+    assert response.json() == {"detail": "AI provider timed out"}
